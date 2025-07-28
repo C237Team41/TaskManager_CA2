@@ -5,7 +5,7 @@ const flash = require('connect-flash');
 const bcrypt = require('bcryptjs');
 const app = express();
 
-// Database connection
+// MySQL database connection
 const connection = mysql.createConnection({
     host: 'f1sh0w.h.filess.io',
     port: 3307,
@@ -14,7 +14,7 @@ const connection = mysql.createConnection({
     database: 'TASKMANAGER_principal'
 });
 
-connection.connect((err) => {
+connection.connect(err => {
     if (err) {
         console.error('Error connecting to MySQL:', err);
         return;
@@ -22,18 +22,17 @@ connection.connect((err) => {
     console.log('Connected to MySQL database');
 });
 
-// View engine setup
+// Middleware
 app.set('view engine', 'ejs');
 app.use(express.static('public'));
 app.use(express.urlencoded({ extended: true }));
 
-// Session middleware
 app.use(session({
     secret: 'secret',
     resave: false,
     saveUninitialized: true,
     cookie: { 
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 1 week
+        maxAge: 1000 * 60 * 60 * 24 * 7,
         secure: false,
         httpOnly: true
     }
@@ -41,29 +40,25 @@ app.use(session({
 
 app.use(flash());
 
-// Middleware for auth and admin check
+// Authentication middlewares
 const checkAuthenticated = (req, res, next) => {
-    if (req.session.user) {
-        return next();
-    }
+    if (req.session.user) return next();
     req.flash('error', 'Please log in to view this resource');
     res.redirect('/login');
 };
 
 const checkAdmin = (req, res, next) => {
-    if (req.session.user?.role === 'admin') {
-        return next();
-    }
+    if (req.session.user?.role === 'admin') return next();
     req.flash('error', 'Access denied');
     res.redirect('/tasks');
 };
 
-// Routes
+// Home route
 app.get('/', (req, res) => {
     res.render('index', { user: req.session.user });
 });
 
-// Register user
+// Register routes
 app.get('/register', (req, res) => {
     res.render('register', { 
         messages: req.flash('error'),
@@ -73,24 +68,23 @@ app.get('/register', (req, res) => {
 
 app.post('/register', async (req, res) => {
     const { username, email, password } = req.body;
-    
+
+    if (!username || !email || !password) {
+        req.flash('error', 'All fields are required');
+        req.flash('formData', req.body);
+        return res.redirect('/register');
+    }
+
+    if (password.length < 6) {
+        req.flash('error', 'Password must be at least 6 characters');
+        req.flash('formData', req.body);
+        return res.redirect('/register');
+    }
+
     try {
-        if (!username || !email || !password) {
-            req.flash('error', 'All fields are required');
-            req.flash('formData', req.body);
-            return res.redirect('/register');
-        }
-
-        if (password.length < 6) {
-            req.flash('error', 'Password must be at least 6 characters');
-            req.flash('formData', req.body);
-            return res.redirect('/register');
-        }
-
         const hashedPassword = await bcrypt.hash(password, 10);
-        
         const sql = 'INSERT INTO users (username, email, password, role, active) VALUES (?, ?, ?, "user", true)';
-        connection.query(sql, [username, email, hashedPassword], (err) => {
+        connection.query(sql, [username, email, hashedPassword], err => {
             if (err) {
                 req.flash('error', 'Username or email already exists');
                 req.flash('formData', req.body);
@@ -107,7 +101,7 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// Login user
+// Login routes
 app.get('/login', (req, res) => {
     res.render('login', { 
         success: req.flash('success'),
@@ -142,7 +136,6 @@ app.post('/login', (req, res) => {
         }
 
         const match = await bcrypt.compare(password, user.password);
-        
         if (!match) {
             req.flash('error', 'Invalid credentials');
             req.flash('formData', { email });
@@ -155,9 +148,15 @@ app.post('/login', (req, res) => {
     });
 });
 
-// **Tasks management routes**
+// Logout
+app.get('/logout', (req, res) => {
+    req.session.destroy(err => {
+        if (err) console.error('Session destruction error:', err);
+        res.redirect('/');
+    });
+});
 
-// GET /tasks - show tasks list
+// Task routes
 app.get('/tasks', checkAuthenticated, (req, res) => {
     const { search, status } = req.query;
     const isAdmin = req.session.user.role === 'admin';
@@ -196,7 +195,6 @@ app.get('/tasks', checkAuthenticated, (req, res) => {
     });
 });
 
-// POST /tasks - create a new task
 app.post('/tasks', checkAuthenticated, (req, res) => {
     const { title, description, category } = req.body;
 
@@ -206,7 +204,7 @@ app.post('/tasks', checkAuthenticated, (req, res) => {
     }
 
     const sql = 'INSERT INTO tasks (title, description, category, user_id) VALUES (?, ?, ?, ?)';
-    connection.query(sql, [title, description || null, category || null, req.session.user.id], (err) => {
+    connection.query(sql, [title, description || null, category || null, req.session.user.id], err => {
         if (err) {
             console.error(err);
             req.flash('error', 'Failed to add task');
@@ -217,8 +215,7 @@ app.post('/tasks', checkAuthenticated, (req, res) => {
     });
 });
 
-// Admin User management routes
-
+// Admin User Management Routes
 app.get('/users', checkAuthenticated, checkAdmin, (req, res) => {
     const sql = 'SELECT id, username, email, role, active FROM users';
     connection.query(sql, (err, users) => {
@@ -226,11 +223,15 @@ app.get('/users', checkAuthenticated, checkAdmin, (req, res) => {
             req.flash('error', 'Failed to load users');
             return res.redirect('/tasks');
         }
-        res.render('users', { users, user: req.session.user, success: req.flash('success'), error: req.flash('error') });
+        res.render('users', {
+            users,
+            user: req.session.user,
+            success: req.flash('success'),
+            error: req.flash('error')
+        });
     });
 });
 
-// Toggle role with protection against demoting self
 app.post('/users/:id/toggle-role', checkAuthenticated, checkAdmin, (req, res) => {
     const userId = req.params.id;
     const currentRole = req.body.currentRole;
@@ -241,21 +242,16 @@ app.post('/users/:id/toggle-role', checkAuthenticated, checkAdmin, (req, res) =>
         return res.redirect('/users');
     }
 
-    connection.query('UPDATE users SET role = ? WHERE id = ?', [newRole, userId], (err) => {
-        if (err) {
-            req.flash('error', 'Failed to change role');
-        } else {
-            req.flash('success', `Role updated to ${newRole}`);
-        }
+    connection.query('UPDATE users SET role = ? WHERE id = ?', [newRole, userId], err => {
+        if (err) req.flash('error', 'Failed to change role');
+        else req.flash('success', `Role updated to ${newRole}`);
         res.redirect('/users');
     });
 });
 
-// Toggle active status with protection against deactivating self
 app.post('/users/:id/toggle-active', checkAuthenticated, checkAdmin, (req, res) => {
     const userId = req.params.id;
-    const currentStatusStr = req.body.currentStatus;
-    const currentStatus = currentStatusStr === 'true';
+    const currentStatus = req.body.currentStatus === 'true';
     const newStatus = !currentStatus;
 
     if (userId == req.session.user.id && !newStatus) {
@@ -263,50 +259,36 @@ app.post('/users/:id/toggle-active', checkAuthenticated, checkAdmin, (req, res) 
         return res.redirect('/users');
     }
 
-    connection.query('UPDATE users SET active = ? WHERE id = ?', [newStatus, userId], (err) => {
-        if (err) {
-            req.flash('error', 'Failed to update user status');
-        } else {
-            req.flash('success', `User has been ${newStatus ? 'activated' : 'deactivated'}`);
-        }
+    connection.query('UPDATE users SET active = ? WHERE id = ?', [newStatus, userId], err => {
+        if (err) req.flash('error', 'Failed to update user status');
+        else req.flash('success', `User has been ${newStatus ? 'activated' : 'deactivated'}`);
         res.redirect('/users');
     });
 });
 
-// Delete user with protection against deleting self
 app.post('/users/:id/delete', checkAuthenticated, checkAdmin, (req, res) => {
     const userId = req.params.id;
-    
+
     if (userId == req.session.user.id) {
         req.flash('error', 'Cannot delete your own account');
         return res.redirect('/users');
     }
 
-    const sql = 'DELETE FROM users WHERE id = ?';
-    connection.query(sql, [userId], (err) => {
+    connection.query('DELETE FROM users WHERE id = ?', [userId], err => {
         if (err) {
             console.error(err);
             req.flash('error', 'Failed to delete user');
-            return res.redirect('/users');
+        } else {
+            req.flash('success', 'User deleted successfully');
         }
-        req.flash('success', 'User deleted successfully');
         res.redirect('/users');
     });
 });
 
-// Logout
-app.get('/logout', (req, res) => {
-    req.session.destroy(err => {
-        if (err) console.error('Session destruction error:', err);
-        res.redirect('/');
-    });
-});
-
-// Error handling middleware
+// Error handler
 app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(500).send(`
-        <!DOCTYPE html>
         <html>
         <head>
             <title>Error</title>
@@ -328,5 +310,3 @@ app.use((err, req, res, next) => {
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
