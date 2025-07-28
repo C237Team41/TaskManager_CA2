@@ -1,4 +1,4 @@
-use TASKMANAGER_principal;
+use TASKMANAGER2_principal;
 
 -- 1. Users table (for authentication)
 CREATE TABLE IF NOT EXISTS users (
