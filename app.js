@@ -7,11 +7,11 @@ const app = express();
 
 // MySQL database connection
 const connection = mysql.createConnection({
-    host: 'f1sh0w.h.filess.io',
+    host: 'a58spk.h.filess.io',
     port: 3307,
-    user: 'TASKMANAGER_principal',
-    password: 'dd787065fafed7027c482ad9ec343f2d68a3fe0d',
-    database: 'TASKMANAGER_principal'
+    user: 'TASKMANAGER2_principal',
+    password: '00699cf33828b9c274c08cf23dcca991756d5b14',
+    database: 'TASKMANAGER2_principal'
 });
 
 connection.connect(err => {
@@ -215,6 +215,76 @@ app.post('/tasks', checkAuthenticated, (req, res) => {
     });
 });
 
+// Update task route
+app.post('/tasks/:id/update', checkAuthenticated, (req, res) => {
+    const taskId = req.params.id;
+    const { title, description, category, status } = req.body;
+
+    if (!title) {
+        req.flash('error', 'Title is required');
+        return res.redirect('/tasks');
+    }
+
+    // Only allow admins or owner to update
+    if (req.session.user.role !== 'admin') {
+        const checkOwnerSql = 'SELECT user_id FROM tasks WHERE id = ?';
+        connection.query(checkOwnerSql, [taskId], (err, results) => {
+            if (err || results.length === 0 || results[0].user_id !== req.session.user.id) {
+                req.flash('error', 'Unauthorized to edit this task');
+                return res.redirect('/tasks');
+            }
+            updateTask();
+        });
+    } else {
+        updateTask();
+    }
+
+    function updateTask() {
+        const updateSql = 'UPDATE tasks SET title = ?, description = ?, category = ?, status = ? WHERE id = ?';
+        connection.query(updateSql, [title, description || null, category || null, status || 'pending', taskId], err => {
+            if (err) {
+                console.error(err);
+                req.flash('error', 'Failed to update task');
+            } else {
+                req.flash('success', 'Task updated successfully');
+            }
+            res.redirect('/tasks');
+        });
+    }
+});
+
+// Delete task route
+app.post('/tasks/:id/delete', checkAuthenticated, (req, res) => {
+    const taskId = req.params.id;
+
+    // Only admins or owner can delete task
+    if (req.session.user.role !== 'admin') {
+        const checkOwnerSql = 'SELECT user_id FROM tasks WHERE id = ?';
+        connection.query(checkOwnerSql, [taskId], (err, results) => {
+            if (err || results.length === 0 || results[0].user_id !== req.session.user.id) {
+                req.flash('error', 'Unauthorized to delete this task');
+                return res.redirect('/tasks');
+            }
+            deleteTask();
+        });
+    } else {
+        deleteTask();
+    }
+
+    function deleteTask() {
+        const deleteSql = 'DELETE FROM tasks WHERE id = ?';
+        connection.query(deleteSql, [taskId], err => {
+            if (err) {
+                console.error(err);
+                req.flash('error', 'Failed to delete task');
+            } else {
+                req.flash('success', 'Task deleted successfully');
+            }
+            res.redirect('/tasks');
+        });
+    }
+});
+
 // Admin User Management Routes
 app.get('/users', checkAuthenticated, checkAdmin, (req, res) => {
     const sql = 'SELECT id, username, email, role, active FROM users';
@@ -310,3 +380,4 @@ app.use((err, req, res, next) => {
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
